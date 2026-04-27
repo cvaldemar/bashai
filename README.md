@@ -10,6 +10,7 @@ Disclaimer: this was vibe coded in 5 minutes. Use with caution and review comman
 
 - bash
 - curl
+- jq (preferred) or python3 (for JSON parsing)
 - One of: xclip, xsel, pbcopy, wl-copy (for clipboard support)
 
 ## Install

@@ -14,6 +14,7 @@ SYSTEM_PROMPT='You are a shell command generator. The user describes a task and 
 
 Rules:
 - Output ONLY the raw shell command. No explanations, no markdown, no code blocks, no backticks.
+- The command MUST be a single line. Never use newlines. Use semicolons or && to chain commands if needed.
 - Use standard Unix tools where possible (bash, awk, sed, ffmpeg, etc).
 - Do not output commands that delete or overwrite files without explicit user confirmation flags (e.g. use -i for interactive, or warn with echo before rm).
 - Do not output commands that exfiltrate data, open network ports, or install software unless explicitly asked.
@@ -81,9 +82,23 @@ RESPONSE=$(curl -sf "$BASHAI_API_URL" \
     -H "Content-Type: application/json" \
     -d "$PAYLOAD") || die "API request failed (url: $BASHAI_API_URL)"
 
-COMMAND=$(printf '%s' "$RESPONSE" | grep -o '"content":"[^"]*"' | head -1 | sed 's/"content":"//;s/"$//' | sed 's/\\n/\n/g; s/\\t/\t/g; s/\\"/"/g; s/\\\\/\\/g')
+if command -v jq &>/dev/null; then
+    COMMAND=$(printf '%s' "$RESPONSE" | jq -r '.choices[0].message.content')
+elif command -v python3 &>/dev/null; then
+    COMMAND=$(printf '%s' "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'], end='')")
+elif command -v python &>/dev/null; then
+    COMMAND=$(printf '%s' "$RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'], end='')")
+else
+    die "jq or python required to parse API response (install jq)"
+fi
 
 [ -z "$COMMAND" ] && die "no command returned from API"
+
+LINE_COUNT=$(printf '%s' "$COMMAND" | wc -l)
+if [ "$LINE_COUNT" -gt 1 ]; then
+    echo "warning: model returned $LINE_COUNT lines, expected 1 - collapsing to single line" >&2
+    COMMAND=$(printf '%s' "$COMMAND" | tr '\n' ' ' | sed 's/  */ /g; s/ $//')
+fi
 
 if printf '%s' "$COMMAND" | grep -q '^# unsafe request'; then
     echo "refused: the request was flagged as unsafe" >&2
