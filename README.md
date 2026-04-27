@@ -14,7 +14,7 @@ Disclaimer: this was vibe coded in 5 minutes. Use with caution and review comman
 
 ## Install
 
-    curl -o ~/.local/bin/bashai https://raw.githubusercontent.com/your-user/bashai/main/bashai
+    curl -o ~/.local/bin/bashai https://raw.githubusercontent.com/cvaldemar/bashai/main/bashai
     chmod +x ~/.local/bin/bashai
 
 ## Usage
@@ -38,6 +38,10 @@ All configuration is done via environment variables.
     BASHAI_MODEL         Model to use. Default: openai/gpt-4o-mini
     BASHAI_DANGER        Set to true to auto-execute the returned command. Default: false
     BASHAI_CLIPBOARD     Set to false to skip copying to clipboard. Default: true
+
+Optionally add an alias to your .bashrc
+
+    alias ai='bashai'
 
 ## Local LLMs
 
