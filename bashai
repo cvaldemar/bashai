@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+BASHAI_API_URL="${BASHAI_API_URL:-https://openrouter.ai/api/v1/chat/completions}"
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+BASHAI_MODEL="${BASHAI_MODEL:-openai/gpt-4o-mini}"
+BASHAI_DANGER="${BASHAI_DANGER:-false}"
+BASHAI_CLIPBOARD="${BASHAI_CLIPBOARD:-true}"
+
+OPENROUTER_URL="https://openrouter.ai/api/v1/chat/completions"
+
+SYSTEM_PROMPT='You are a shell command generator. The user describes a task and you respond with a single shell command that accomplishes it.
+
+Rules:
+- Output ONLY the raw shell command. No explanations, no markdown, no code blocks, no backticks.
+- Use standard Unix tools where possible (bash, awk, sed, ffmpeg, etc).
+- Do not output commands that delete or overwrite files without explicit user confirmation flags (e.g. use -i for interactive, or warn with echo before rm).
+- Do not output commands that exfiltrate data, open network ports, or install software unless explicitly asked.
+- Do not output commands that modify system files outside the current working directory unless explicitly asked.
+- If the request is ambiguous, output the safest reasonable interpretation.
+- If the request cannot be fulfilled as a safe shell command, output only: # unsafe request'
+
+usage() {
+    echo "Usage: bashai <description of command>"
+    echo ""
+    echo "Environment variables:"
+    echo "  OPENROUTER_API_KEY   Required when using OpenRouter. Your OpenRouter API key."
+    echo "  BASHAI_API_URL       API endpoint. Default: https://openrouter.ai/api/v1/chat/completions"
+    echo "                       Ollama:    http://localhost:11434/v1/chat/completions"
+    echo "                       LM Studio: http://localhost:1234/v1/chat/completions"
+    echo "  BASHAI_MODEL         Model to use. Default: openai/gpt-4o-mini"
+    echo "                       Ollama example:    llama3"
+    echo "                       LM Studio example: local-model"
+    echo "  BASHAI_DANGER        Set to 'true' to auto-execute the command. Default: false"
+    echo "  BASHAI_CLIPBOARD     Set to 'false' to skip copying to clipboard. Default: true"
+    exit 1
+}
+
+die() {
+    echo "error: $1" >&2
+    exit 1
+}
+
+copy_to_clipboard() {
+    local text="$1"
+    if command -v xclip &>/dev/null; then
+        printf '%s' "$text" | xclip -selection clipboard
+    elif command -v xsel &>/dev/null; then
+        printf '%s' "$text" | xsel --clipboard --input
+    elif command -v pbcopy &>/dev/null; then
+        printf '%s' "$text" | pbcopy
+    elif command -v wl-copy &>/dev/null; then
+        printf '%s' "$text" | wl-copy
+    else
+        echo "note: clipboard tool not found (install xclip, xsel, or pbcopy)" >&2
+        return 1
+    fi
+}
+
+[ $# -eq 0 ] && usage
+
+if [ "$BASHAI_API_URL" = "$OPENROUTER_URL" ]; then
+    [ -z "$OPENROUTER_API_KEY" ] && die "OPENROUTER_API_KEY is not set (required for OpenRouter)"
+    AUTH_HEADER="Authorization: Bearer $OPENROUTER_API_KEY"
+elif [ -n "$OPENROUTER_API_KEY" ]; then
+    AUTH_HEADER="Authorization: Bearer $OPENROUTER_API_KEY"
+else
+    AUTH_HEADER="Authorization: Bearer no-key"
+fi
+
+PROMPT="$*"
+
+PAYLOAD=$(printf '{"model":"%s","messages":[{"role":"system","content":"%s"},{"role":"user","content":"%s"}]}' \
+    "$BASHAI_MODEL" \
+    "$(printf '%s' "$SYSTEM_PROMPT" | sed 's/\\/\\\\/g; s/"/\\"/g; s/$/\\n/' | tr -d '\n' | sed 's/\\n$//')" \
+    "$(printf '%s' "$PROMPT" | sed 's/\\/\\\\/g; s/"/\\"/g')")
+
+RESPONSE=$(curl -sf "$BASHAI_API_URL" \
+    -H "$AUTH_HEADER" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD") || die "API request failed (url: $BASHAI_API_URL)"
+
+COMMAND=$(printf '%s' "$RESPONSE" | grep -o '"content":"[^"]*"' | head -1 | sed 's/"content":"//;s/"$//' | sed 's/\\n/\n/g; s/\\t/\t/g; s/\\"/"/g; s/\\\\/\\/g')
+
+[ -z "$COMMAND" ] && die "no command returned from API"
+
+if printf '%s' "$COMMAND" | grep -q '^# unsafe request'; then
+    echo "refused: the request was flagged as unsafe" >&2
+    exit 2
+fi
+
+echo "$COMMAND"
+
+if [ "$BASHAI_CLIPBOARD" = "true" ]; then
+    if copy_to_clipboard "$COMMAND"; then
+        echo "[copied to clipboard]" >&2
+    fi
+fi
+
+if [ "$BASHAI_DANGER" = "true" ]; then
+    echo "" >&2
+    echo "executing..." >&2
+    eval "$COMMAND"
+fi
